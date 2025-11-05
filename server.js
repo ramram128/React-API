@@ -1,49 +1,41 @@
-// Load environment variables from a .env file (for local testing)
-require('dotenv').config(); 
+// This file runs only when the /api/login endpoint is hit.
 
-const express = require('express');
 const mongoose = require('mongoose');
-const bodyParser = require('body-parser');
-const cors = require('cors');
 
-const app = express();
-// Use port from environment variable (PORT) or default to 3000
-const PORT = process.env.PORT || 3000; 
+// Use the MONGODB_URI from environment variables
+const MONGODB_URI = process.env.MONGODB_URI;
 
-// --- Middlewares ---
-app.use(bodyParser.json());
-// Allow requests from all origins (CORS) - necessary for your mobile app
-app.use(cors()); 
-
-// --- 1. MongoDB Connection Setup ---
-// Get MongoDB URI from environment variables (must be set in .env or deployment config)
-// You need to replace 'YOUR_MONGO_DB_URI' with your actual connection string.
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/userDB'; 
-
-mongoose.connect(MONGODB_URI)
-    .then(() => console.log('✅ Connected to MongoDB successfully!'))
-    .catch(err => console.error('❌ MongoDB connection error:', err));
-
-// --- 2. Define User Schema and Model ---
+// Define User Schema and Model (same as before)
 const UserSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true }
-    // NOTE: For a production app, always use password hashing (like bcrypt)
 });
+const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
-const User = mongoose.model('User', UserSchema);
+// Connection state check to prevent connection throttling
+let cachedDb = null;
 
-// --- 3. API Routes ---
+async function connectToDatabase() {
+    if (cachedDb) {
+        return cachedDb;
+    }
+    const db = await mongoose.connect(MONGODB_URI);
+    cachedDb = db;
+    return db;
+}
 
-// Test route to ensure the server is running
-app.get('/', (req, res) => {
-    res.status(200).json({ message: 'API is running' });
-});
+// The main handler function for the Vercel serverless endpoint
+module.exports = async (req, res) => {
+    // 1. Only allow POST requests
+    if (req.method !== 'POST') {
+        return res.status(405).json({ message: 'Method Not Allowed' });
+    }
 
-// Login Endpoint (Handles POST request from React Native app)
-app.post('/login', async (req, res) => {
+    // 2. Connect to the database
+    await connectToDatabase();
+
     const { email, password } = req.body;
-    
+
     if (!email || !password) {
         return res.status(400).json({ message: 'Email and password are required' });
     }
@@ -51,26 +43,17 @@ app.post('/login', async (req, res) => {
     try {
         const user = await User.findOne({ email });
 
-        // Authentication Check
+        // 3. Authentication Check
         if (user && user.password === password) {
-            // Successful Login: return a token or success message
-            // Replace with actual JWT token generation in a real app
-            return res.status(200).json({ 
-                message: 'Login successful', 
-                token: 'simulated_auth_token_12345' 
+            return res.status(200).json({
+                message: 'Login successful',
+                token: 'simulated_auth_token_vercel'
             });
         } else {
-            // Failed Login
             return res.status(401).json({ message: 'Invalid email or password' });
         }
     } catch (error) {
         console.error('Login database error:', error);
         return res.status(500).json({ message: 'Server error during authentication' });
     }
-});
-
-// --- 4. Start Server ---
-app.listen(PORT, () => {
-    console.log(`🚀 Server is listening on port ${PORT}`);
-    console.log(`Local test URL: http://localhost:${PORT}`);
-});
+};
